@@ -5,7 +5,7 @@ import os
 
 app = FastAPI()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("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")
 WORDPRESS_API_URL = os.getenv("WORDPRESS_API_URL")
 
 @app.post("/generate")
