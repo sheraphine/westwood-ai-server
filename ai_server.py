@@ -1,48 +1,46 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 import openai
-import requests
 import os
 
 app = FastAPI()
 
-openai.api_key = os.getenv("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")
-WORDPRESS_API_URL = os.getenv("WORDPRESS_API_URL")
+# CORS beállítások
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# OpenAI API kulcs
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @app.post("/generate")
 async def generate_reply(request: Request):
-    data = await request.json()
-    character_id = data.get("character_id")
-    room_id = data.get("room_id")
-
-    if not character_id or not room_id:
-        return {"error": "character_id és room_id kötelező"}
-
-    prompt = f"Te egy szerepjátékos karakter vagy. Karakter ID: {character_id}, Szoba ID: {room_id}. Válaszolj fantasy stílusban."
-
     try:
+        data = await request.json()
+        character_name = data.get("character_name")
+        messages = data.get("messages")
+
+        if not character_name or not messages:
+            return {"error": "character_name és messages kötelező"}
+
+        # System prompt
+        system_prompt = f"Te egy szerepjátékos karakter vagy: {character_name}. Válaszolj fantasy stílusban a következő beszélgetésre."
+
+        # Összeállított prompt lista
+        chat_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        # OpenAI hívás
         response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Te egy fantasy szerepjáték karakter vagy."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.8
+            messages=chat_messages,
+            temperature=0.8,
         )
 
-        reply = response['choices'][0]['message']['content']
-
-        wp_response = requests.post(WORDPRESS_API_URL, json={
-            "character_id": character_id,
-            "room_id": room_id,
-            "message": reply
-        })
-
-        return {
-            "status": "ok",
-            "reply": reply,
-            "wp_response_code": wp_response.status_code,
-            "wp_response_text": wp_response.text
-        }
+        reply = response["choices"][0]["message"]["content"]
+        return {"reply": reply}
 
     except Exception as e:
         return {"error": str(e)}
