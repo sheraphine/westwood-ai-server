@@ -1,5 +1,5 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
+  "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "startCommand": "uvicorn ai_server:app --host 0.0.0.0 --port $PORT",
     "restartPolicyType": "ON_FAILURE",
