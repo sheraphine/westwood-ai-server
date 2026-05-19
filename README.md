@@ -1,21 +1,34 @@
-# WestWood AI Server v4 - Roleplay tuning
+# WestWood AI Server v5
 
-Railway + FastAPI AI backend a WestWood chat AI karaktereihez.
+FastAPI + OpenAI szerver a WestWood szerepjátékos AI karakterekhez.
 
-## Kötelező Railway változók
+## Végpontok
 
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` ajánlott: `gpt-4o-mini`
-- `CORS_ORIGINS` ajánlott: `https://westwood.hu,https://www.westwood.hu`
-
-## Opcionális változók
-
-- `MAX_HISTORY_MESSAGES` alapértelmezett: `24`
-- `MAX_OUTPUT_TOKENS` alapértelmezett: `650`
-- `DEFAULT_TEMPERATURE` alapértelmezett: `0.78`
-
-## Teszt
-
-- `/health`
-- `/debug-openai`
+- `GET /health`
+- `GET /debug-openai`
 - `POST /generate`
+
+## Fontos változók Railway-ben
+
+```text
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+CORS_ORIGINS=https://westwood.hu,https://www.westwood.hu
+MAX_HISTORY_MESSAGES=24
+MAX_OUTPUT_TOKENS=650
+ENABLE_MEMORY_UPDATE=1
+MAX_MEMORY_UPDATE_TOKENS=120
+```
+
+## v5 újdonság
+
+A `/generate` válasza már opcionálisan visszaadja:
+
+```json
+{
+  "reply": "...",
+  "memory_update": "..."
+}
+```
+
+A `memory_update` rövid, tartós memória-bejegyzés. A WordPress plugin menti vissza az `ai_characters.memory` mezőbe.

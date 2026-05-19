@@ -13,11 +13,13 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "24"))
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "650"))
 DEFAULT_TEMPERATURE = float(os.getenv("DEFAULT_TEMPERATURE", "0.78"))
+ENABLE_MEMORY_UPDATE = os.getenv("ENABLE_MEMORY_UPDATE", "1").strip().lower() not in {"0", "false", "no", "off"}
+MAX_MEMORY_UPDATE_TOKENS = int(os.getenv("MAX_MEMORY_UPDATE_TOKENS", "120"))
 
 cors_raw = os.getenv("CORS_ORIGINS", "https://westwood.hu,https://www.westwood.hu")
 CORS_ORIGINS = [x.strip() for x in cors_raw.split(",") if x.strip()]
 
-app = FastAPI(title=APP_NAME, version="4.0.0")
+app = FastAPI(title=APP_NAME, version="5.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS or ["*"],
@@ -52,7 +54,6 @@ def normalize_messages(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, str
         text = clean_text(item.get("message") or item.get("content"))
         if not text:
             continue
-        # Ne engedjük, hogy egy üzenet túlzottan szétnyomja a promptot.
         if len(text) > 1800:
             text = text[:1800].rstrip() + "…"
         normalized.append({"speaker": speaker, "text": text})
@@ -94,30 +95,80 @@ def strip_name_prefix(reply: str, character_name: str) -> str:
     if not reply:
         return reply
 
-    # Tipikus modell-előtagok eltávolítása: "Michael Desmond:", "Michael Desmond -", stb.
-    names_to_strip = [character_name.strip()]
-    # Biztonsági variáció: ha sok szóközzel vagy dupla kettősponttal kezd.
-    for name in names_to_strip:
+    for name in [character_name.strip()]:
         if not name:
             continue
         escaped = re.escape(name)
         for _ in range(3):
             reply = re.sub(rf"^\s*{escaped}\s*[:：\-–—]+\s*", "", reply, flags=re.IGNORECASE).strip()
 
-    # Általános, nem kívánt előtagok.
     for _ in range(2):
         reply = re.sub(r"^\s*(AI|Asszisztens|Válasz|Üzenet|Narráció|Reakció)\s*[:：\-–—]+\s*", "", reply, flags=re.IGNORECASE).strip()
 
-    # Ne csomagolja idézőjelbe a teljes választ.
     reply = reply.strip().strip('"').strip("'").strip()
     return reply
 
 
 def normalize_reply(reply: str, character_name: str) -> str:
     reply = strip_name_prefix(reply, character_name)
-    # Túl sok üres sor takarítása.
     reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
     return reply
+
+
+def normalize_memory_update(text: str) -> str:
+    text = clean_text(text)
+    if not text:
+        return ""
+    text = text.strip().strip('"').strip("'").strip()
+    low = text.lower().strip(" .!-")
+    if low in {"nincs", "nincs új emlék", "nincs releváns emlék", "nincs változás", "none", "no memory", "no update", "n/a"}:
+        return ""
+    # Egy rövid naplóbejegyzés legyen, ne hosszú összefoglaló.
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > 450:
+        text = text[:450].rstrip() + "…"
+    return text
+
+
+def build_memory_update(character_name: str, profile_block: str, conversation_block: str, reply: str) -> str:
+    if not ENABLE_MEMORY_UPDATE or client is None:
+        return ""
+
+    prompt = f"""
+Te egy szerepjátékos AI karakter memóriakezelője vagy.
+Karakter: {character_name}
+
+Feladatod: döntsd el, hogy a mostani jelenetből érdemes-e tartós memóriát menteni a karakter adatlapjába.
+Csak akkor írj memóriát, ha történt valami később is fontos dolog: kapcsolat, konfliktus, ígéret, félelem, titok, kötődés, sérülés, cél, döntés, visszatérő helyzet.
+Ne ments el hétköznapi, jelentéktelen udvariasságot vagy általános hangulatot.
+Ha nincs mit menteni, pontosan ezt írd: NINCS
+Ha van mit menteni, írj egyetlen rövid magyar mondatot, harmadik személyben, a karakter szemszögéből használható emlékként. Ne kezdd dátummal.
+
+Karakterprofil:
+{profile_block}
+
+Jelenet előzménye:
+{conversation_block}
+
+A karakter mostani válasza:
+{reply}
+""".strip()
+
+    try:
+        completion = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": "Rövid, pontos memóriabejegyzést készítesz. Csak a kért szöveget add vissza."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=MAX_MEMORY_UPDATE_TOKENS,
+            temperature=0.2,
+        )
+        return normalize_memory_update(completion.choices[0].message.content or "")
+    except Exception as exc:
+        # A memóriafrissítés ne törje el magát az AI választ.
+        print(f"Memory update error: {type(exc).__name__}: {exc}", flush=True)
+        return ""
 
 
 @app.get("/")
@@ -135,7 +186,8 @@ def health() -> Dict[str, Any]:
         "ok": True,
         "openai_key_configured": bool(OPENAI_API_KEY),
         "model": OPENAI_MODEL,
-        "version": "4.0.0",
+        "version": "5.0.0",
+        "memory_update_enabled": ENABLE_MEMORY_UPDATE,
         "max_history_messages": MAX_HISTORY_MESSAGES,
         "max_output_tokens": MAX_OUTPUT_TOKENS,
     }
@@ -194,7 +246,6 @@ A karakter adatlapja, amit kötelező figyelembe venni:
         system_prompt += f"\n\nJelenlegi szoba: {payload.room_name}."
 
     if payload.instruction:
-        # A WordPressből érkező instrukciót megtartjuk, de nem engedjük felülírni az alapszabályokat.
         system_prompt += "\n\nKiegészítő oldal-instrukciók:\n" + clean_text(payload.instruction)
 
     user_prompt = f"""
@@ -222,12 +273,16 @@ Ne kezdd a választ névvel vagy előtaggal. Csak a chatüzenet törzse jöjjön
         reply = normalize_reply(raw_reply, character_name)
         if not reply:
             raise HTTPException(status_code=502, detail="Az OpenAI üres választ adott.")
+
+        memory_update = build_memory_update(character_name, profile_block, conversation_block, reply)
+
         return {
             "ok": True,
             "reply": reply,
+            "memory_update": memory_update,
             "character_name": character_name,
             "model": OPENAI_MODEL,
-            "version": "4.0.0",
+            "version": "5.0.0",
         }
     except HTTPException:
         raise
